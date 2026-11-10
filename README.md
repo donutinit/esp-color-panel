@@ -160,7 +160,8 @@ La asignación está pensada para la rueda Global de HDR:
 | Botón 1, mantenido 1.5 s | Guarda dónde está el botón HDR (con el puntero encima) |
 | Botón 2 | DISABLE |
 | Botón 3 | UNDO |
-| Botón 4 | OFFSET |
+| Botón 4, un toque | OFFSET |
+| Botón 4, doble toque | VIEWER (el visor grande) |
 
 El panel no tiene tecla para abrir la paleta HDR y Resolve tampoco tiene un atajo de teclado para eso, así que el doble toque hace el clic en la pantalla: lleva el cursor al botón, aprieta y lo regresa a donde estaba. La primera vez, pon el puntero sobre el botón HDR de Resolve y mantén el botón 1 apretado 1.5 s; la posición queda en `~/.config/mcp-falso/c3.json`. Si cambias el tamaño de la ventana de Resolve, hay que guardarla otra vez.
 

@@ -13,7 +13,8 @@ y las convierte en acciones del Micro Color Panel falso:
             mantenido   1.5 s con el puntero sobre el botón HDR: guarda dónde está
   Botón 2               DISABLE (apaga/prende el nodo)
   Botón 3               UNDO
-  Botón 4               OFFSET
+  Botón 4   un toque    OFFSET (sale 0.2 s después, por el doble toque)
+            doble toque VIEWER: el visor grande
 
 El clic: el cursor va al botón, aprieta y regresa a donde estaba.
   Linux   Hyprland (IPC) para mover el cursor + un mouse virtual de uinput (/dev/uinput es del grupo input).
@@ -34,9 +35,9 @@ import time
 
 CONFIG = os.path.expanduser("~/.config/mcp-falso/c3.json")
 MANTENER_CALIBRA = 1.5                           # segundos con el botón 1 apretado para guardar la posición de HDR
-DOBLE = 0.2                                      # segundos entre soltar y volver a apretar el botón 1 = doble toque
+DOBLE = 0.2                                      # segundos entre soltar y volver a apretar un botón = doble toque
 
-SHIFT_UP, SHIFT_DOWN, OFFSET, UNDO, DISABLE = 24, 25, 13, 16, 21
+SHIFT_UP, SHIFT_DOWN, OFFSET, UNDO, DISABLE, VIEWER = 24, 25, 13, 16, 21, 30
 ENCODERS = {1: 12, 2: 13, 3: 14}                 # encoder → anillo de mcp_falso (izq, centro, der)
 RESETS = {"P1": (33, "RESET LIFT", []), "P2": (34, "RESET GAMMA", []), "P3": (35, "RESET GAIN", [SHIFT_DOWN])}
 CORTO = {1: "TEMP", 2: "TINT", 3: "EXP"}
@@ -218,6 +219,7 @@ def hilo(puerto, panel):
     # botón 1: desde = cuándo se apretó (None = suelto); pendiente = hora en que sale el toque simple si no
     # llega un segundo; doble = este apretón es el segundo toque (al soltarlo no cuenta como toque nuevo)
     b1 = {"desde": None, "calibrado": False, "pendiente": None, "doble": False}
+    b4 = {"pendiente": None, "doble": False}          # botón 4: igual que el 1, sin el mantenido
 
     def mostrar(conectado):
         st["c3"] = (f"C3 {ruta['actual']} {'✔' if conectado else '✘ sin conexión'} · "
@@ -257,8 +259,16 @@ def hilo(puerto, panel):
             panel.tecla(DISABLE)
         elif len(p) == 2 and p[0] == "B3" and p[1] == "1":
             panel.tecla(UNDO)
-        elif len(p) == 2 and p[0] == "B4" and p[1] == "1":
-            panel.tecla(OFFSET)
+        elif len(p) == 2 and p[0] == "B4":
+            if p[1] == "1":
+                b4["doble"] = b4["pendiente"] is not None      # había un toque esperando: este es el segundo
+                b4["pendiente"] = None
+                if b4["doble"]:
+                    panel.tecla(VIEWER)
+            else:
+                if not b4["doble"]:
+                    b4["pendiente"] = time.monotonic() + DOBLE
+                b4["doble"] = False
 
     avisado = False
     while not panel.salir.is_set():
@@ -288,6 +298,9 @@ def hilo(puerto, panel):
                     b1["pendiente"] = None
                     panel.combo([SHIFT_UP], OFFSET, dura=0.3)
                     log("C3 botón 1 → SHIFT UP + OFFSET (Primaries ⇄ Log)", "tecla")
+                if b4["pendiente"] is not None and ahora >= b4["pendiente"]:
+                    b4["pendiente"] = None
+                    panel.tecla(OFFSET)
                 if not listo:
                     continue
                 d = os.read(fd, 256)
