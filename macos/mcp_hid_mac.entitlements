@@ -2,8 +2,8 @@
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
-	<!-- Permite crear dispositivos HID virtuales (IOHIDUserDevice). Es un entitlement restringido: firmado ad hoc
-	     solo lo respeta macOS con SIP desactivado. -->
+	<!-- Allows creating virtual HID devices (IOHIDUserDevice). It's a restricted entitlement: ad hoc signed,
+	     macOS only honors it with SIP disabled and the boot-arg amfi_get_out_of_my_way=1. -->
 	<key>com.apple.developer.hid.virtual.device</key>
 	<true/>
 </dict>

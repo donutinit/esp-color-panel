@@ -1,113 +1,136 @@
-# mcp-falso
+# esp-color-panel
 
-Un DaVinci Resolve Micro Color Panel de mentira. Resolve cree que tiene conectado el panel de Blackmagic (USB `1edb:da0f`) y obedece a un script de Python que lo maneja desde el teclado o desde perillas reales conectadas a una ESP32-C3.
+A fake DaVinci Resolve Micro Color Panel. Resolve thinks the Blackmagic panel (USB `1edb:da0f`) is plugged in and takes orders from a Python script that drives it from the keyboard or from real knobs wired to an ESP32-C3.
 
-Nació porque yo quería una sola cosa: una perilla física para la exposición de las HDR wheels, sin trackballs. En el camino salió el panel entero en el teclado.
+On Linux the panel is a virtual USB gadget (`dummy_hcd` + `f_hid`); on macOS it is a virtual HID device (`IOHIDUserDevice`) that needs SIP and AMFI turned off. In both, a Python "firmware" speaks the panel's HID protocol, as reverse engineered by ra100. The protocol notes are in [docs/protocol.md](docs/protocol.md).
 
-> **English summary.** A fake Blackmagic DaVinci Resolve Micro Color Panel. On Linux it is a virtual USB gadget (`dummy_hcd` + `f_hid`) driven by a Python "firmware" that speaks the panel's HID protocol, as reverse engineered by [ra100](https://github.com/ra100/micro-color-panel-controller). Resolve Studio 21.2 accepts it: the knobs, the OFFSET key and the trackball rings work (the rings also drive the HDR Global wheel), and the other keys are mapped but not all verified. An ESP32-C3 with three rotary encoders can feed it real knobs. There is an experimental, untested macOS port based on `IOHIDUserDevice` that needs SIP disabled. Docs are in Spanish; the protocol notes are in [docs/protocolo.md](docs/protocolo.md).
+It started because I wanted one thing: a physical knob for the exposure of the HDR wheels, without trackballs. Along the way the whole panel ended up on the keyboard.
 
-## Gracias, ra100
+## Thanks, ra100
 
-Todo esto se apoya en el trabajo de [ra100](https://github.com/ra100), que le hizo ingeniería inversa al Micro Color Panel y publicó [micro-color-panel-controller](https://github.com/ra100/micro-color-panel-controller): una captura con Wireshark del tráfico USB entre un panel real y Resolve, más el mapa de cada control. Su proyecto va en la dirección contraria (usar el panel de verdad fuera de Resolve), y aun así su captura trae lo que hacía falta para fingir el panel. De ahí salen los descriptores USB, la secuencia con la que Resolve abre el panel, el formato de cada reporte y el bit de cada tecla. Sin esa captura este repo no existiría.
+All of this rests on the work of [ra100](https://github.com/ra100), who reverse engineered the Micro Color Panel and published [micro-color-panel-controller](https://github.com/ra100/micro-color-panel-controller): a Wireshark capture of the USB traffic between a real panel and Resolve, plus the map of every control. That project goes the other way (using the real panel outside Resolve), and still its capture has everything it takes to fake the panel. The USB descriptors, the sequence Resolve uses to open the panel, the format of each report and the bit of each key all come from there. Without that capture this repo wouldn't exist.
 
-El orden de las perillas y lo que hace cada tecla con Shift salen del manual del Micro Color Panel de Blackmagic Design.
+The order of the knobs and what each key does with Shift come from Blackmagic Design's Micro Color Panel manual.
 
-## Cómo funciona
+## How it works
 
 ```
- teclado o ESP32-C3 (3 encoders + 4 botones)
+ keyboard or ESP32-C3 (3 encoders + 4 buttons)
         │
         ▼
- tools/mcp_falso.py      el "firmware": arma los reportes HID del panel
+ tools/fake_panel.py     the "firmware": builds the panel's HID reports
         │
-        ├── Linux   /dev/hidgN → f_hid + dummy_hcd → un USB 1edb:da0f → hidraw → Resolve
+        ├── Linux   /dev/hidgN → f_hid + dummy_hcd → a USB 1edb:da0f → hidraw → Resolve
         │
-        └── macOS   macos/mcp_hid_mac → IOHIDUserDevice 1edb:da0f → Resolve   (sin probar)
+        └── macOS   macos/mcp_hid_mac → IOHIDUserDevice 1edb:da0f → Resolve
 ```
 
-En Linux, `dummy_hcd` crea un controlador USB virtual y `configfs` le cuelga un dispositivo HID con el VID y el PID del panel. Para Resolve es un panel enchufado. Resolve busca el panel subiendo por los padres USB del hidraw, y por eso aquí hace falta un USB virtual completo; un HID simple (`uhid`) no tiene ese padre y Resolve lo ignora. Los detalles están en [docs/protocolo.md](docs/protocolo.md).
+On Linux, `dummy_hcd` creates a virtual USB controller and `configfs` hangs an HID device with the panel's VID and PID off it. To Resolve it's a plugged-in panel. Resolve finds the panel by walking up the USB parents of the hidraw, and that's why a full virtual USB is needed here; a plain HID (`uhid`) has no such parent and Resolve ignores it. The details are in [docs/protocol.md](docs/protocol.md).
 
-`mcp_falso.py` deja listas las respuestas que Resolve pide al abrir el panel (versión de firmware, batería, brillo), registra lo que Resolve le manda (LEDs de las teclas, indicadores de Shift) y convierte cada tecla o perilla en el reporte que mandaría el panel real.
+On macOS, the helper `macos/mcp_hid_mac` creates the device with `IOHIDUserDevice`, and `fake_panel.py` talks to it over its stdin and stdout.
 
-## Antes de empezar
+`fake_panel.py` has ready the answers Resolve asks for when it opens the panel (firmware version, battery, brightness), logs what Resolve sends it (key LEDs, Shift indicators) and turns each key or knob into the report the real panel would send.
 
-Las perillas cambian tu proyecto de verdad, y Resolve acelera según la velocidad del giro: un regreso rápido no deshace un avance lento. Haz las pruebas en un proyecto de prueba.
+## Before you start
 
-Este proyecto no tiene relación con Blackmagic Design. "DaVinci Resolve" y "Micro Color Panel" son marcas de Blackmagic Design; aquí solo se nombran para decir con qué es compatible.
+The knobs change your project for real, and Resolve accelerates with the speed of the turn: a fast turn back doesn't undo a slow turn forward. Do your testing in a test project.
 
-## Lo que necesitas
+This project has no relation to Blackmagic Design. "DaVinci Resolve" and "Micro Color Panel" are trademarks of Blackmagic Design; they are named here only to say what this is compatible with.
 
-En Linux (probado en Fedora 44, kernel 7.2, con DaVinci Resolve Studio 21.2):
+## What you need
 
-- Los módulos `dummy_hcd`, `libcomposite` y `usb_f_hid`. Fedora los trae; en otras distros revísalo con `modinfo dummy_hcd`, porque algunas no compilan `dummy_hcd` y hay que compilarlo aparte.
-- `sudo`, solo para crear y borrar el USB virtual.
-- Python 3.8 o más nuevo, sin paquetes extra.
-- DaVinci Resolve Studio. No sabemos si la versión gratuita acepta el panel.
+On Linux (tested on Fedora 44, kernel 7.2, with DaVinci Resolve Studio 21.2):
 
-En macOS (sin probar):
+- The `dummy_hcd`, `libcomposite` and `usb_f_hid` modules. Fedora ships them; on other distros check with `modinfo dummy_hcd`, because some don't build `dummy_hcd` and you have to build it yourself.
+- `sudo`, only to create and remove the virtual USB.
+- Python 3.8 or newer, no extra packages.
+- DaVinci Resolve Studio. We don't know if the free version accepts the panel.
 
-- SIP desactivado. Abajo está el porqué.
-- Las herramientas de línea de comandos de Xcode (`xcode-select --install`).
-- Python 3 de Homebrew o de python.org.
-- `pip3 install pyobjc-framework-Quartz`, solo si vas a usar el clic en HDR de la ESP32-C3.
+On macOS (tested on macOS 26.3, Apple Silicon, with DaVinci Resolve Studio 21.0.2):
 
-Para las perillas físicas (opcional):
+- SIP disabled and the boot-arg `amfi_get_out_of_my_way=1`. Together they turn off code signature validation for the whole system; the macOS section below explains why it's needed and how to undo it.
+- The Xcode command line tools (`xcode-select --install`).
+- Python 3 from Homebrew or python.org.
+- `pyobjc-framework-Quartz`, only if you'll use the HDR click of the ESP32-C3. Homebrew's Python refuses a plain `pip install`, so: `python3 -m pip install --user --break-system-packages pyobjc-framework-Quartz`.
 
-- Una ESP32-C3 SuperMini, tres encoders EC11 con pulsador y cuatro botones.
-- [PlatformIO](https://platformio.org/) para compilar y flashear el firmware.
+For the physical knobs (optional):
 
-## Linux, paso a paso
+- An ESP32-C3 SuperMini, three EC11 encoders with push switch and four buttons.
+- [PlatformIO](https://platformio.org/) to build and flash the firmware. `pipx install platformio` installs it.
 
-1. Crea el panel y "conéctalo":
+## Linux, step by step
+
+1. Create the panel and "plug it in":
 
    ```sh
    sudo tools/mcp_gadget.sh up
    ```
 
-   Instala una regla de udev para que tu usuario pueda abrir el hidraw del panel, carga los módulos, arma el gadget y le da a tu usuario el `/dev/hidgN`. Al final te dice qué hidraw creó el sistema.
+   It installs a udev rule so your user can open the panel's hidraw, loads the modules, builds the gadget and gives your user the `/dev/hidgN`. At the end it tells you which hidraw the system created.
 
-2. Arranca el firmware:
+2. Start the firmware:
 
    ```sh
-   python3 tools/mcp_falso.py
+   python3 tools/fake_panel.py
    ```
 
-   Si Resolve ya estaba abierto, mejor ciérralo y ábrelo después de este paso. Resolve pide la versión de firmware apenas ve el panel, y la respuesta tiene que estar lista.
+   If Resolve was already open, better close it and open it after this step. Resolve asks for the firmware version as soon as it sees the panel, and the answer has to be ready.
 
-3. Abre Resolve y ve a la página Color. Arriba, en la interfaz de `mcp_falso.py`, debe aparecer "✔ sesión abierta". Si Resolve no toma el panel solo, elígelo en Preferencias → Control Panels.
+3. Open Resolve and go to the Color page. At the top of the `fake_panel.py` interface you should see "✔ session open". If Resolve doesn't take the panel by itself, pick it in Preferences → Control Panels.
 
-Para desconectar y volver a conectar el cable virtual sin cerrar Resolve existe `sudo tools/mcp_gadget.sh replug`. `sudo tools/mcp_gadget.sh down` lo borra todo y `tools/mcp_gadget.sh status` muestra cómo está.
+To unplug and replug the virtual cable without closing Resolve there's `sudo tools/mcp_gadget.sh replug`. `sudo tools/mcp_gadget.sh down` removes everything and `tools/mcp_gadget.sh status` shows how it stands.
 
-Si quieres probar sin Resolve, `python3 tools/mcp_leer.py` hace de Resolve: abre el hidraw, repite el arranque de la captura y te muestra lo que manda el panel. Y con `python3 tools/mcp_falso.py --simular` ves la interfaz sin gadget.
+If you want to test without Resolve, `python3 tools/fake_resolve.py` plays Resolve: it opens the hidraw, replays the startup from the capture and shows you what the panel sends. And `python3 tools/fake_panel.py --simulate` shows you the interface without a gadget.
 
-## macOS, paso a paso (sin probar)
+## macOS, step by step
 
-Esta parte se escribió sin una Mac a la mano. El ayudante en C se compiló y se corrió en Linux contra un IOKit simulado, y eso solo comprueba nuestra lógica. Falta ver si macOS lo deja correr y si Resolve acepta un HID virtual como panel. Si lo pruebas, abre un issue y cuéntanos qué pasó.
+Tested on 2026-11-09 on macOS 26.3 (Apple Silicon) with DaVinci Resolve Studio 21.0.2: macOS sees the panel and Resolve opens a session with it. Not confirmed yet: that the knobs and keys do anything in Resolve, and the HDR click. If you try those, open an issue and tell us what happened.
 
-macOS sí tiene una forma de crear un HID virtual (`IOHIDUserDevice`), pero exige el entitlement `com.apple.developer.hid.virtual.device`, y Apple no lo da sin una solicitud aprobada. Con una firma ad hoc macOS solo lo respeta si desactivas SIP.
+macOS does have a way to create a virtual HID (`IOHIDUserDevice`), but it requires the `com.apple.developer.hid.virtual.device` entitlement, and Apple doesn't grant it without an approved request. `build.sh` signs the helper ad hoc with that entitlement, and macOS won't run it like that while its protections are on. Disabling SIP is not enough: AMFI still kills the helper at launch ("Killed: 9"), and the kernel log says "Code has restricted entitlements, but the validation of its code signature failed". It also takes the boot-arg `amfi_get_out_of_my_way=1`.
 
-1. Desactiva SIP: arranca en modo de recuperación, abre la Terminal y corre `csrutil disable`. Reinicia. Cuando termines de usar el panel puedes volver a activarlo con `csrutil enable`.
-2. Compila y firma el ayudante:
+That boot-arg turns off code signature validation for the whole system, not just for this helper: macOS will run any binary, whether its signature is valid or not. Do it only on a machine where you're fine with that, and undo it when you're done (at the end of this section).
+
+1. Disable SIP: boot into recoveryOS (on Apple Silicon, shut down, hold the power button until the startup options appear and choose Options), open Terminal and run `csrutil disable`. Restart into macOS.
+2. Check whether you already have boot-args:
+
+   ```sh
+   nvram boot-args
+   ```
+
+   If it prints an error, you have none, and this is enough:
+
+   ```sh
+   sudo nvram boot-args="amfi_get_out_of_my_way=1"
+   ```
+
+   If it prints something, write it down and keep it, adding the new one at the end: `sudo nvram boot-args="<what you had> amfi_get_out_of_my_way=1"`. Setting boot-args replaces the whole value.
+
+3. Reboot.
+4. Build and sign the helper:
 
    ```sh
    macos/build.sh
    ```
 
-3. Arranca el firmware. En macOS lanza solo a `macos/mcp_hid_mac`:
+5. Start the firmware. On macOS it launches `macos/mcp_hid_mac` by itself:
 
    ```sh
-   python3 tools/mcp_falso.py
+   python3 tools/fake_panel.py
    ```
 
-4. Abre Resolve y elige el panel en Preferencias → Control Panels si no lo toma solo.
+6. Open Resolve and go to the Color page. At the top of the interface you should see "✔ session open". If Resolve doesn't take the panel by itself, pick it in Preferences → Control Panels.
 
-Si macOS mata al ayudante al arrancar ("Killed: 9") o dice que no pudo crear el HID virtual, puede faltar además el boot-arg `amfi_get_out_of_my_way=1`. Tampoco lo hemos probado.
+To check that it works without touching your project, start it with `python3 tools/fake_panel.py --listen` instead: it only logs what Resolve sends and sends nothing. That's how it was tested: the helper prints READY, macOS lists the device as `1edb:da0f` "DaVinci Resolve Micro Color Panel", and Resolve opens a session (SessionEnabled) and sends the brightness and the key LEDs.
 
-## El panel en el teclado
+If the helper still dies with "Killed: 9", the boot-arg didn't take: check `nvram boot-args`, `csrutil status`, and that you rebooted after setting them.
 
-Las perillas van en las flechas: ↑ y ↓ eligen la perilla, ← y → la giran, Shift con las flechas gira ×10 o cambia el tamaño del paso, y espacio aprieta la perilla elegida. Después de LUM MIX vienen los tres anillos de las bolas.
+To undo it when you're done, put the boot-args back with `sudo nvram -d boot-args` if you had none, or `sudo nvram boot-args="<what you had>"`. Then boot into recoveryOS, run `csrutil enable` and restart.
 
-Las 40 teclas van en cuatro filas, como en un teclado latinoamericano (en uno US, `;` y `/` hacen de `ñ` y `-`):
+## The panel on the keyboard
+
+The knobs are on the arrow keys: ↑ and ↓ pick the knob, ← and → turn it, Shift with the arrows turns ×10 or changes the step size, and space presses the selected knob. After LUM MIX come the three trackball rings.
+
+The 40 keys are in four rows, as on a Latin American keyboard (on a US one, `;` and `/` act as `ñ` and `-`):
 
 ```
 1 PLAY STILL   2 WIPE STILL   3 GRAB STILL   4 H/LITE       5 VIEWER       6 CURSOR       7 SELECT       8 ADD NODE     9 ADD WINDOW   0 ADD KEYFRM
@@ -116,90 +139,98 @@ A AUTO COLOR   S OFFSET       D COPY         F PASTE        G UNDO         H RED
 Z USER         X LOOP         C SHIFT UP     V SHIFT DOWN   B RESET LIFT   N RESET GAMMA  M RESET GAIN   , ◀ PLAY       . ■ STOP       - ▶ PLAY
 ```
 
-C y V (SHIFT UP y SHIFT DOWN) se quedan puestas hasta la siguiente tecla, como en el panel, y mientras están puestas cada tecla muestra lo que hace con Shift. Las teclas cuyo LED prende Resolve salen en verde. `python3 tools/mcp_falso.py --mapa` imprime las tres capas.
+C and V (SHIFT UP and SHIFT DOWN) stay on until the next key, as on the panel, and while they're on each key shows what it does with Shift. Keys whose LED Resolve turns on show in green. `python3 tools/fake_panel.py --map` prints the three layers.
 
-Para la exposición de HDR: abre la paleta HDR, aprieta S (OFFSET) y usa el tercer anillo. El primero es Temp y el segundo Tint, siempre sobre la rueda Global.
+For HDR exposure: open the HDR palette, press S (OFFSET) and use the third ring. The first is Temp and the second Tint, always on the Global wheel.
 
-## Perillas de verdad con una ESP32-C3
+## Real knobs with an ESP32-C3
 
-La C3 no tiene USB nativo, así que no puede hacerse pasar por el panel. Lo que hace es leer los encoders y los botones y mandarlos como texto por su USB serie; `mcp_falso.py --c3` los convierte en acciones del panel. Cada interruptor va a su propio GPIO y a GND, con el pull-up interno, así que no hace falta matriz ni diodos.
+The C3 has no native USB, so it can't pass itself off as the panel. What it does is read the encoders and buttons and send them as text over its USB serial; `fake_panel.py --c3` turns them into panel actions. Each switch goes to its own GPIO and to GND, with the internal pull-up, so there's no need for a matrix or diodes.
 
-| GPIO | Conexión | GPIO | Conexión |
+| GPIO | Connection | GPIO | Connection |
 |---|---|---|---|
-| 7 / 8 | Encoder 1, A / B | 6 | Pulsador del encoder 1 |
-| 1 / 0 | Encoder 2, A / B | 5 | Pulsador del encoder 2 |
-| 3 / 2 | Encoder 3, A / B | 4 | Pulsador del encoder 3 |
-| 10 / 20 | Botón 1 / Botón 2 | 21 / 9 | Botón 3 / Botón 4 |
+| 7 / 8 | Encoder 1, A / B | 6 | Encoder 1 push switch |
+| 1 / 0 | Encoder 2, A / B | 5 | Encoder 2 push switch |
+| 3 / 2 | Encoder 3, A / B | 4 | Encoder 3 push switch |
+| 10 / 20 | Button 1 / Button 2 | 21 / 9 | Button 3 / Button 4 |
 
-La pata central de cada encoder (C) va a GND, igual que la otra pata de cada botón y de cada pulsador. Todo funciona a 3.3 V. Hay tres detalles de la SuperMini: el GPIO8 tiene el LED azul (parpadea al girar el encoder 1), el GPIO9 es el botón BOOT (no tengas el botón 4 apretado al conectarla o entra en modo de flasheo) y el GPIO2 es un pin de arranque. Si tus encoders giran al revés, cambia el signo de su entrada en `firmware/c3/src/main.cpp`.
+The middle pin of each encoder (C) goes to GND, and so does the other leg of each button and each push switch. Everything runs at 3.3 V. Three things about the SuperMini: GPIO8 has the blue LED (it blinks when you turn encoder 1), GPIO9 is the BOOT button (don't hold button 4 down while plugging it in, or it goes into flashing mode) and GPIO2 is a strapping pin. If your encoders turn the wrong way, flip the sign of their input in `firmware/c3/src/main.cpp`.
 
-Flashea el firmware y prueba el cableado:
+Flash the firmware and test the wiring:
 
 ```sh
 pio run -d firmware/c3 -t upload
-python3 tools/c3_probar.py
+python3 tools/c3_test.py
 ```
 
-`c3_probar.py` imprime una línea por cada clic y cada botón. Un clic normal cuenta 4 cuartos de paso. Ciérralo antes de volver a flashear, porque los dos usan el mismo puerto.
+`c3_test.py` prints a line for every click and every button. A normal click counts 4 quarter steps. Close it before flashing again, because both use the same port.
 
-Después, en vez del paso 2 de arriba:
+The C3 shows up as `/dev/ttyACM0` on Linux and as the first `/dev/cu.usbmodem*` on macOS; `c3_test.py` and `--c3` use that by default and take another port as an argument. When `c3_test.py` starts, the C3 should answer "HELLO esp-color-panel 1". If it answers "HOLA c3_prueba 1", it has an older test firmware whose lines `fake_panel.py` ignores; flash it again with the command above.
+
+Then start the firmware like this instead (step 2 on Linux, step 5 on macOS):
 
 ```sh
-python3 tools/mcp_falso.py --c3
+python3 tools/fake_panel.py --c3
 ```
 
-La asignación está pensada para la rueda Global de HDR:
+The mapping is meant for the HDR Global wheel:
 
-| Control | Qué hace |
+| Control | What it does |
 |---|---|
-| Encoders 1, 2 y 3 | Los anillos izquierdo, central y derecho. Con OFFSET y la paleta HDR: Temp, Tint y Exp |
-| Pulsadores 1 y 2 | RESET LIFT y RESET GAMMA (resetean Temp y Tint) |
-| Pulsador 3 | SHIFT DOWN + RESET GAIN (resetea solo el anillo derecho) |
-| Botón 1, un toque | SHIFT UP + OFFSET: alterna entre Primaries y Log |
-| Botón 1, doble toque | Clic en el botón de la paleta HDR |
-| Botón 1, mantenido 1.5 s | Guarda dónde está el botón HDR (con el puntero encima) |
-| Botón 2 | DISABLE |
-| Botón 3 | UNDO |
-| Botón 4, un toque | OFFSET |
-| Botón 4, doble toque | VIEWER (el visor grande) |
+| Encoders 1, 2 and 3 | The left, center and right rings. With OFFSET and the HDR palette: Temp, Tint and Exp |
+| Push switches 1 and 2 | RESET LIFT and RESET GAMMA (they reset Temp and Tint) |
+| Push switch 3 | SHIFT DOWN + RESET GAIN (resets only the right ring) |
+| Button 1, single tap | SHIFT UP + OFFSET: toggles between Primaries and Log |
+| Button 1, double tap | Clicks the HDR palette button |
+| Button 1, held 1.5 s | Saves where the HDR button is (with the pointer over it) |
+| Button 2 | DISABLE |
+| Button 3 | UNDO |
+| Button 4, single tap | OFFSET |
+| Button 4, double tap | VIEWER (enlarges the viewer) |
 
-El panel no tiene tecla para abrir la paleta HDR y Resolve tampoco tiene un atajo de teclado para eso, así que el doble toque hace el clic en la pantalla: lleva el cursor al botón, aprieta y lo regresa a donde estaba. La primera vez, pon el puntero sobre el botón HDR de Resolve y mantén el botón 1 apretado 1.5 s; la posición queda en `~/.config/mcp-falso/c3.json`. Si cambias el tamaño de la ventana de Resolve, hay que guardarla otra vez.
+The panel has no key to open the HDR palette and Resolve has no keyboard shortcut for it either, so the double tap clicks on the screen: it moves the cursor to the button, clicks and puts the cursor back where it was. The first time, put the pointer over Resolve's HDR button and hold button 1 down for 1.5 s; the position is saved in `~/.config/esp-color-panel/c3.json`. If you resize the Resolve window, you have to save it again.
 
-En Linux el clic funciona en Hyprland: mueve el cursor por su IPC y aprieta con un mouse virtual de `uinput`, al que tu usuario necesita acceso (grupo `input`). Con otro compositor todo lo demás funciona, pero el clic no. En macOS usa Quartz, y la terminal necesita permiso de Accesibilidad (Ajustes del Sistema → Privacidad y seguridad → Accesibilidad).
+On Linux the click works on Hyprland: it moves the cursor through its IPC and clicks with a `uinput` virtual mouse, which your user needs access to (`input` group). With another compositor everything else works, but the click doesn't. On macOS it uses Quartz (`pyobjc-framework-Quartz`, see What you need), and your terminal app needs Accessibility permission (System Settings → Privacy & Security → Accessibility). Restart the terminal after granting it.
 
-La asignación entera está al principio de `tools/c3_entrada.py`.
+The whole mapping is at the top of `tools/c3_input.py`.
 
-## Qué está probado
+## What's tested
 
-Probado en Resolve Studio 21.2 sobre Linux:
+On Linux, with Resolve Studio 21.2:
 
-- Resolve acepta el panel virtual y lee la versión de firmware 2.2.0.
-- Contrast, Mid Detail y Saturation se mueven con sus perillas.
-- Con OFFSET y la paleta HDR, los anillos mueven Temp, Tint y Exp de la rueda Global.
-- La ESP32-C3 lee bien los tres encoders, los tres pulsadores y los cuatro botones.
+- Resolve accepts the virtual panel and reads firmware version 2.2.0.
+- Contrast, Mid Detail and Saturation move with their knobs.
+- With OFFSET and the HDR palette, the rings move Temp, Tint and Exp of the Global wheel.
+- The ESP32-C3 reads the three encoders, the three push switches and the four buttons correctly.
 
-Falta confirmar:
+On macOS 26.3 (Apple Silicon), with Resolve Studio 21.0.2:
 
-- El bit de cada tecla. Sale de ra100 y de la captura, pero no se ha revisado una por una.
-- Cuál de los bits 24 y 25 es SHIFT UP. Prueba: C y luego 8 debe dar un nodo paralelo; si da un layer, están al revés.
-- El orden de bits de los LEDs que manda Resolve.
-- Que el botón 1 cambie a Log y que el clic en HDR llegue a Resolve.
-- Todo lo de macOS.
+- With SIP disabled and `amfi_get_out_of_my_way=1`, the helper starts (READY) and macOS sees the panel as `1edb:da0f`.
+- Resolve opens a session with the panel (SessionEnabled) and sends it the brightness and the key LEDs.
+- The ESP32-C3 works over `/dev/cu.usbmodem*`.
 
-## Los archivos
+Still to confirm:
 
-| Archivo | Qué hace | Sistema |
+- The bit of each key. It comes from ra100 and the capture, but hasn't been checked one by one.
+- Which of bits 24 and 25 is SHIFT UP. Test: C and then 8 should give a parallel node; if it gives a layer, they're swapped.
+- The bit order of the LEDs Resolve sends.
+- That button 1 switches to Log and that the HDR click reaches Resolve.
+- On macOS, everything past the session: what the knobs and keys do in Resolve, and the HDR click.
+
+## The files
+
+| File | What it does | System |
 |---|---|---|
-| `tools/mcp_gadget.sh` | Crea, reconecta y borra el USB virtual (con sudo) | Linux |
-| `tools/mcp_falso.py` | El firmware: interfaz, teclado y reportes del panel | Linux, macOS |
-| `tools/mcp_leer.py` | Hace de Resolve contra el panel, para probar sin Resolve | Linux |
-| `macos/mcp_hid_mac.c` | El HID virtual de macOS; `build.sh` lo compila y lo firma | macOS |
-| `tools/c3_entrada.py` | Convierte lo que manda la ESP32-C3 en acciones del panel | Linux, macOS |
-| `tools/c3_probar.py` | Imprime lo que haces con cada encoder y botón | Linux, macOS |
-| `firmware/c3/` | Firmware de la ESP32-C3 (PlatformIO, Arduino) | |
-| `tools/decodificar_captura.py` | Resume los reportes de la captura de ra100 (con tshark) | Linux, macOS |
-| `docs/protocolo.md` | Todo lo que se sabe del protocolo | |
+| `tools/mcp_gadget.sh` | Creates, replugs and removes the virtual USB (with sudo) | Linux |
+| `tools/fake_panel.py` | The firmware: interface, keyboard and panel reports | Linux, macOS |
+| `tools/fake_resolve.py` | Plays Resolve against the panel, to test without Resolve | Linux |
+| `macos/mcp_hid_mac.c` | The macOS virtual HID (needs SIP and AMFI off); `build.sh` builds and signs it | macOS |
+| `tools/c3_input.py` | Turns what the ESP32-C3 sends into panel actions | Linux, macOS |
+| `tools/c3_test.py` | Prints what you do with each encoder and button | Linux, macOS |
+| `firmware/c3/` | Firmware for the ESP32-C3 (PlatformIO, Arduino) | |
+| `tools/decode_capture.py` | Summarizes the reports in ra100's capture (with tshark) | Linux, macOS |
+| `docs/protocol.md` | Everything known about the protocol | |
 
-## Licencia
+## License
 
-MIT. Ver [LICENSE](LICENSE).
+MIT. See [LICENSE](LICENSE).

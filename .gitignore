@@ -1,4 +1,4 @@
-# Lo que se genera al compilar o correr
+# Build and run output
 .pio/
 __pycache__/
 macos/mcp_hid_mac

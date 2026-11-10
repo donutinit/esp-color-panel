@@ -1,4 +1,4 @@
-# Resume los reportes IN de la captura de ra100 que saca tshark (el comando está al final de docs/protocolo.md).
+# Summarizes the IN reports from the ra100 capture as dumped by tshark (the command is at the end of docs/protocol.md).
 import sys, struct, collections
 # stdin: frame \t time \t hexdata (interrupt IN completions from dev 65)
 cnt = collections.Counter(); knob = collections.defaultdict(list); ball = collections.defaultdict(list)
@@ -18,14 +18,14 @@ for line in sys.stdin:
             if x: ball[i].append(x)
     elif d[0] == 2:
         btn.append((t, int.from_bytes(d[1:9], "little")))
-print("ids:", dict(cnt)); print("lens:", dict(lens)); print("0x06 con >1 slot != 0:", multi)
+print("ids:", dict(cnt)); print("lens:", dict(lens)); print("0x06 with >1 slot != 0:", multi)
 for i in sorted(knob):
     xs = [x for _, x in knob[i]]
-    print(f"slot {i:2d}: n={len(xs):4d} t={knob[i][0][0]:.1f}-{knob[i][-1][0]:.1f}s min={min(xs)} max={max(xs)} suma={sum(xs)} mod360={set(x % 360 for x in xs)} valores={collections.Counter(xs).most_common(6)}")
+    print(f"slot {i:2d}: n={len(xs):4d} t={knob[i][0][0]:.1f}-{knob[i][-1][0]:.1f}s min={min(xs)} max={max(xs)} sum={sum(xs)} mod360={set(x % 360 for x in xs)} values={collections.Counter(xs).most_common(6)}")
 for i in sorted(ball):
-    xs = ball[i]; print(f"bola slot {i}: n={len(xs)} min={min(xs)} max={max(xs)} mod4096={set(x%4096 for x in xs)}")
+    xs = ball[i]; print(f"ball slot {i}: n={len(xs)} min={min(xs)} max={max(xs)} mod4096={set(x%4096 for x in xs)}")
 prev = 0
 for t, b in btn:
     on = [i for i in range(64) if (b >> i) & 1 and not (prev >> i) & 1]
-    if on: print(f"  {t:6.2f}s botón bit(s) {on}")
+    if on: print(f"  {t:6.2f}s button bit(s) {on}")
     prev = b
